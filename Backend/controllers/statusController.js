@@ -1,7 +1,7 @@
 const Status = require("../models/Status.js")
-const { uploadFileToCloudinary } = require("../config/clloudinaryConfig.js")
+const { uploadFileToCloudinary } = require("../config/cloudinaryConfig.js")
 const response = require("../utils/responseHandler.js")
-const Message = require("./models/Message.js")
+const Message = require("../models/Message.js")
 
 exports.createStatus = async (req, res) => {
     try {
@@ -37,15 +37,22 @@ exports.createStatus = async (req, res) => {
             user: userId,
             content: mediaUrl || content,
             contentType: finalContentType,
-            imageOrVideoUrl,
-            messageStatus,
+            expiresAt,
         })
 
-        await message.save()
+        await status.save()
 
         const populateStatus = await Message.findOne(status?._id)
         .populate("user", "username profilePicture")
         .populate("viewers", "username profilePicture")
+
+        if(req.io && req.socketUserMap) {
+            for( const[connectUserId, socketId] of req.socketUserMap) {
+                if(connectUserId !== userId) {
+                    req.io.to(socketId).emit("newStatus", populateStatus)
+                }
+            }
+        }
 
         return response(res, 201, "Status Created Successfully", populateStatus)
 
@@ -83,8 +90,27 @@ exports.viewStatus = async (req, res) => {
         if(!status.viewers.includes(userId)) {
             status.viewers.push(userId) 
             await status.save()
-        }else{
-            console.log("user alreay viewed the status")
+
+            const populatedStatus = await status.findById(statusId)
+                .populate("viewers", "username profilePicture")
+                .populate("viewers", "username profilePicture")
+
+                if(req.io && req.socketUserMap) {
+                    const statusOwnerSocketId = req.socketUserMap.get(status.user._id.toString())
+                    if(statusOwnerSocketId) {
+                        const viewData = {
+                        statusId,
+                        viewer:userId,
+                        totalViewers:updateStatus.viewers.length,
+                        viewers: populatedStatus.viewers,
+                    }
+                        req.io.to(statusOwnerSocketId).emit("statusViewed", populatedStatus)
+                    } else {
+                        console.log("Status owner is not connected via socket")
+                    }  
+                }
+        } else {
+            console.log("user already viewed the status")
         }
 
         return response(res, 200, "Status Viewed Successfully")
@@ -103,11 +129,19 @@ exports.deleteStatus = async (req, res) => {
             return response(res, 404, "Status not found")
         }
 
-        if(status.user.tostring() !== userId) {
+        if(status.user.toString() !== userId) {
             return response(res, 403, "Not authorized to delete this status")
         }
 
         await status.deleteOne()
+
+        if(req.io && req.socketUserMap) {
+            for(const [connectedUserId, socketId] of req.socketUserMap) {
+                if(connectedUserId !== userId) {
+                    req.io.to(socketId).emit("statusDeleted", statusId)
+                }
+            }
+        }
         
         return response(res, 200, "Status Deleted Successfully")
     } catch (error) {
@@ -115,3 +149,5 @@ exports.deleteStatus = async (req, res) => {
         return response(res, 500, 'Internal Server Error')
     }
 }
+
+

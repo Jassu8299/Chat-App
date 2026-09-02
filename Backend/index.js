@@ -7,6 +7,7 @@ const connectDB = require('./config/DBconnect')
 const bodyParser = require('body-parser')
 const authRoute = require('./routes/authRoute')
 const chatRoute = require('./routes/chatRoute')
+const statusRoute = require('./routes/statusRoute')
 const initializeSocket = require('./services/socketService')
 const http = require('http')
 
@@ -20,10 +21,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions))
 
-const server = http.createServer(app)
-
-const io = initializeSocket(server)
-
 app.post('/', (req, res) => {
   res.send('server running')
 })
@@ -35,10 +32,21 @@ app.use(cookieparser())
 app.use(bodyParser.urlencoded({extended: true}))
 connectDB()
 
+const server = http.createServer(app)
+
+const io = initializeSocket(server)
+
+app.use((req, res, next) => {
+  req.io = io;
+  req.socketUserMap = io.socketUserMap;
+  next();
+})
+
 app.use('/api/auth', authRoute)
 app.use('/api/chat', chatRoute)
+app.use('/api/status', statusRoute)
 
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`Server is running on port ${port}`)
 })
 

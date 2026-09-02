@@ -60,11 +60,20 @@ exports.sendMessages = async ( res, req ) => {
         conversation.unreadCounts+=1;
         await conversation.save()
 
-        const populateMessage = await Message.findOne(message?._id)
+        const populatedMessage = await Message.findOne(message?._id)
         .populate("sender", "username profilePicture")
         .populate("receiver", "username profilePicture")
 
-        return response(res, 201, "Message sent Successfully", populateMessage)
+        if(req.io && req.socketUserMap) {
+            const receiverSocketId = req.socketUserMap.get(receiverId)
+            if(receiverSocketId) {
+                req.io.to(receiverSocketId).emit("New_Message", populatedMessage)
+                message.messageStatus = "delivered"
+                await message.save()
+            }
+        }
+
+        return response(res, 201, "Message sent Successfully", populatedMessage)
 
     } catch (error) {
         console.log(error)
@@ -99,7 +108,7 @@ exports.getMessages = async (res, req) => {
     
     try {
         const conversation = await Conversation.findById(conversationId)
-        if(!converation) {
+        if(!conversation) {
             return response(res, 404, "Conversation not Found")
         }      
         if(!conversation.participants.includes(userId)) {
@@ -121,7 +130,7 @@ exports.getMessages = async (res, req) => {
             },
         )
 
-        conversation.unreadCount = 0;
+        conversation.unreadCounts = 0;
         await conversation.save();
 
         return response(res, 200, "Messages Retrieved", message)
@@ -144,8 +153,22 @@ exports.markAsRead = async (req, res) => {
         );
         await messages.updateMany(
             {_id: {$in: messageIds}, receiver: userId},
-            {$st:{messageStatus:"read"}}
+            {$set:{messageStatus:"read"}}
         );
+
+        if(req.io && req.socketUserMap) {
+            for(const message of messages) {
+                const senderSocketId = req.socketUserMap.get(message.sender.toString());
+                if(senderSocketId) {
+                    const updateMessage = {
+                        _id: message._id,
+                        messageStatus: "read",
+                    }
+                    req.io.to(senderSocketId).emit("message-read", updateMessage)
+                    await message.save()
+                }
+            }
+        }
 
         return response(res, 200, "Messages are marked as read", messages)
     } catch (e) {
@@ -167,6 +190,13 @@ exports.deleteMessage = async (res, req) => {
         }
 
         await message.deleteOne()
+
+        if(req.io && req.socketUserMap) {
+            const receiverSocketId = req.socketUserMap.get(message.receiver.toString())
+            if(receiverSocketId) {
+                req.io.to(receiverSocketId).emit("message-deleted", messageId)
+            }
+        }
 
         return response(res, 200, "Message Deleted Successfully")
     } catch (e) {

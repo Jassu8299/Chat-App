@@ -1,0 +1,13 @@
+{
+  "name": "my-project",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "npm --prefix backend run dev",
+    "dev": "concurrently \"npm run frontend\" \"npm run backend\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
